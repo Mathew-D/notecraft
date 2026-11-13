@@ -816,6 +816,9 @@ pub struct NoteCraftApp {
     page_rect: Option<egui::Rect>,
     /// The canvas translation in screen points. It is UI state, so it never changes page data.
     canvas_pan: egui::Vec2,
+    /// How far the page's scroll area is scrolled, as of last frame: sideways as well as down,
+    /// for a page whose boxes reach past the window.
+    page_scroll: egui::Vec2,
     /// Last middle-button position while panning the canvas.
     canvas_drag: Option<egui::Pos2>,
     /// What the pointer does on the page (the Draw tab).
@@ -978,6 +981,7 @@ impl NoteCraftApp {
             stylus: crate::stylus::Stylus::default(),
             page_rect: None,
             canvas_pan: egui::Vec2::ZERO,
+            page_scroll: egui::Vec2::ZERO,
             canvas_drag: None,
             pointer: ribbon::Pointer::Write,
             rack,
@@ -6462,7 +6466,9 @@ impl NoteCraftApp {
                     drag: egui::containers::scroll_area::DragScroll::Never,
                     ..egui::containers::scroll_area::ScrollSource::default()
                 };
-                egui::ScrollArea::vertical().id_salt("page-main").auto_shrink([false, false]).scroll_source(scroll).show(ui, |ui| {
+                // Both directions: a page whose boxes reach past the window's edge is wider
+                // than the view, and the bar along the bottom is how the rest of it is reached.
+                let page_scroll = egui::ScrollArea::both().id_salt("page-main").auto_shrink([false, false]).scroll_source(scroll).show(ui, |ui| {
                     page(
                         ui,
                         ed,
@@ -6477,6 +6483,7 @@ impl NoteCraftApp {
                         &mut rename,
                     );
                 });
+                self.page_scroll = page_scroll.state.clamped_offset();
             }
             if changed {
                 Self::mark_dirty(ed);
@@ -8123,6 +8130,9 @@ impl NoteCraftApp {
                 "selectedImage": crate::containers::selected_image(ctx, &e.dir),
                 "selectedObject": crate::containers::selected_object(ctx, &e.dir).map(|(block, kind)| json!({"block": block, "kind": kind})),
                 "origin": [e.origin.x, e.origin.y],
+                // How far the page is scrolled in its view: down and, for a page wider than
+                // the window, sideways.
+                "scroll": [self.page_scroll.x, self.page_scroll.y],
                 // What can be taken back, and how many steps are kept.
                 "history": {"steps": e.history.len(), "at": e.history.at(), "canUndo": e.history.can_undo(), "canRedo": e.history.can_redo()},
             })),

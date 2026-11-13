@@ -290,6 +290,10 @@ pub fn show(
     let caret_box = caret.as_ref().and_then(|c| container::place(boxes, c.block)).map(|(i, _)| i);
     let before = blocks.len();
     let mut bottom = area.min.y;
+    // And how far right the boxes reach on screen: a box placed or zoomed past the page's
+    // column is still part of the page, so the width claimed below covers it and the page
+    // can be scrolled sideways to it.
+    let mut right = area.max.x;
     // How far down the boxes with something in them reach: where "below everything" is. A blank
     // box (the cursor's place on open paper) is not counted.
     let mut filled_bottom = area.min.y;
@@ -474,6 +478,7 @@ pub fn show(
         let frame = Rect::from_min_size(frame_at, vec2(width * zoom + 2.0 * pad, used + pad));
         frames.push(frame);
         bottom = bottom.max(frame.max.y);
+        right = right.max(frame.max.x);
         let holds_nothing = holds_nothing(blocks, &range);
         if !holds_nothing {
             filled_bottom = filled_bottom.max(frame.max.y);
@@ -1272,8 +1277,9 @@ pub fn show(
     // The containers were drawn in child uis, which do not move this ui's cursor. Claim the
     // space they took, so the page scrolls to their bottom and so the room under them really
     // is under them: allocated at the cursor it would sit on top of the first container and
-    // take every click meant for a block.
-    ui.allocate_rect(Rect::from_min_max(area.min, pos2(area.max.x, bottom)), Sense::hover());
+    // take every click meant for a block. The claim reaches as far right as the boxes do, so
+    // a box past the page's column makes the page wider than the window and scrolls to it.
+    ui.allocate_rect(Rect::from_min_max(area.min, pos2(right.max(area.max.x), bottom)), Sense::hover());
     // Open paper beside or between the boxes: a click there starts a box of its own where the pointer
     // is, as it does under them. It does nothing when it only lets go of a selected box or a menu,
     // or when it landed in a box's own margin.
@@ -1509,6 +1515,7 @@ pub fn show_ink_view(
     out.origin = area.min;
     *boxes = container::fit(boxes, blocks.len(), (area.width() / zoom - 2.0 * PAD).max(container::MIN_WIDTH));
     let mut bottom = area.min.y;
+    let mut right = area.max.x;
 
     for (container_index, container) in boxes.iter().copied().enumerate() {
         let range = container::blocks_of(boxes, container_index);
@@ -1540,11 +1547,14 @@ pub fn show_ink_view(
         }
         let used = child.min_rect().height().max(18.0);
         bottom = bottom.max(area.min.y + container.y * zoom + HANDLE * zoom + used + PAD * zoom);
+        right = right.max(inner.max.x + PAD * zoom).max(child.min_rect().max.x);
     }
 
     // Child UIs do not advance the parent cursor; reserve their complete page-space extent
-    // so scrolling and the following ink-layer allocation match the editable page.
-    ui.allocate_rect(Rect::from_min_max(area.min, pos2(area.max.x, bottom)), Sense::hover());
+    // so scrolling and the following ink-layer allocation match the editable page. The
+    // claim reaches as far right as the boxes do, so a box past the page's column makes the
+    // page wider than the window and scrolls to it.
+    ui.allocate_rect(Rect::from_min_max(area.min, pos2(right.max(area.max.x), bottom)), Sense::hover());
     out.bottom = page_points_below(area, bottom, zoom);
     out
 }

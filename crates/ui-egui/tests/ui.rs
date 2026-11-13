@@ -534,6 +534,43 @@ fn middle_drag_pans_the_canvas_for_html_and_cmgfm_pages() {
     }
 }
 
+/// A page whose boxes reach past the window's edge is wider than the view: the page scrolls
+/// sideways, so the part that does not fit can still be reached. This is what zooming in on
+/// an arranged page does to the boxes that were placed for a narrower view.
+#[test]
+fn a_page_wider_than_the_window_scrolls_sideways() {
+    let (_t, mut app, sample) = sample_app("ui-page-sideways");
+    app.open_path(&sample.html_page.to_string_lossy());
+    let mut h = harness(app, LIGHT);
+    settle(&mut h);
+
+    // Arrange the page so its last block sits in a box far to the right, past the column.
+    let page = sample.html_page.to_string_lossy().into_owned();
+    let blocks = ask(&mut h, "ui.inspect", json!({})).expect("inspect")["page"]["blocks"].as_u64().expect("block count");
+    assert!(blocks >= 2, "the sample page has blocks to arrange: {blocks}");
+    let boxes = format!("0,0,600,{}; 1600,40,500,1", blocks - 1);
+    ask(&mut h, "engine.execute", json!({"command": "page.containers", "params": {"path": page, "boxes": boxes}})).expect("arrange the page");
+    ask(&mut h, "ui.open", json!({"path": page})).expect("reload the arranged page");
+    settle(&mut h);
+
+    let state = ask(&mut h, "ui.inspect", json!({})).expect("inspect arranged page");
+    assert_eq!(state["page"]["scroll"], json!([0.0, 0.0]), "the page opens at its top left: {state}");
+    let containers = state["page"]["containers"].as_array().expect("containers");
+    assert!(containers.iter().any(|b| b["x"].as_f64() == Some(1600.0)), "the far box is on the page: {containers:?}");
+
+    // The pointer over the page, then a sideways scroll: the view follows the content.
+    let origin = state["page"]["origin"].as_array().expect("page origin");
+    ask(&mut h, "ui.move", json!({"x": origin[0].as_f64().unwrap_or(0.0) + 200.0, "y": origin[1].as_f64().unwrap_or(0.0) + 200.0}))
+        .expect("hover the page");
+    pump(&mut h);
+    ask(&mut h, "ui.scroll", json!({"x": -400.0, "y": 0.0})).expect("scroll sideways");
+    settle(&mut h);
+    let scrolled = ask(&mut h, "ui.inspect", json!({})).expect("inspect scrolled page");
+    let offset = scrolled["page"]["scroll"].as_array().expect("page scroll offset");
+    assert_ne!(offset[0].as_f64(), Some(0.0), "the page scrolls sideways to the far box: {scrolled}");
+    review(&mut h, "page_scrolled_sideways");
+}
+
 #[test]
 fn drawing_over_text_keeps_ink_above_the_page_without_editing_words() {
     let (_t, mut app, sample) = sample_app("ui-ink-over-text");
@@ -4032,7 +4069,11 @@ fn dragging_a_box_to_the_bottom_edge_scrolls_the_page() {
     settle(&mut h);
     ask(&mut h, "ui.press", json!({"x": x, "y": y})).expect("down");
     pump(&mut h);
-    let bottom = 760.0_f32;
+    // Held near the bottom edge for a while. The edge band reaches well up the view, so the
+    // pointer can wait a little above the window's last row: the page still scrolls, and the
+    // box's strip is left somewhere its handle can be grabbed again - the bottom few points
+    // of the view belong to the scroll bar once the page is wider than the window.
+    let bottom = 730.0_f32;
     for step in 1..=10 {
         let at = y + (bottom - y) * step as f32 / 10.0;
         ask(&mut h, "ui.move", json!({"x": x, "y": at})).expect("drag down");
@@ -4054,7 +4095,7 @@ fn dragging_a_box_to_the_bottom_edge_scrolls_the_page() {
     assert!((box_y - under_pointer).abs() < 30.0, "the box stays under the pointer: at {box_y}, the pointer is over {under_pointer}: {after}");
 
     // And back up: held at the top of the view, the page scrolls back, but not past its own top.
-    // The strip of the box, where it now sits on the scrolled page.
+    // The middle of the drag strip along the top of the first box, where it now sits.
     let y = oy_after + box_y + 7.0;
     ask(&mut h, "ui.press", json!({"x": x, "y": y})).expect("down on the strip again");
     pump(&mut h);
